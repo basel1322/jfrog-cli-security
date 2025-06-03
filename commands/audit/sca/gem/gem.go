@@ -16,20 +16,18 @@ import (
 	xrayUtils "github.com/jfrog/jfrog-client-go/xray/services/utils"
 
 	"github.com/jfrog/jfrog-cli-core/v2/utils/coreutils"
-	cliUtils "github.com/jfrog/jfrog-cli-security/utils" // Assuming this is your utils type
+	cliUtils "github.com/jfrog/jfrog-cli-security/utils"
 )
 
 const (
 	internalPackagePrefix = "rubygems:"
-	rubyV2                = "2.6.0" // The minimum required version
+	rubyV2                = "2.6.0"
 	jsonGemPrefix         = "rubygems://"
-	gemVirtualRootID      = "root" // Matching your test's expected virtual root ID
+	gemVirtualRootID      = "root"
 	stateSearchGEM        = iota
 	stateSearchSpecsKeyword
 	stateInSpecsSection
 )
-
-// Regex to capture the main version part before a 'pXXX' patchlevel
 
 type GemDep struct {
 	Ref    string `json:"ref"`
