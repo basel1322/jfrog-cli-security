@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp" // Added for regex-based version cleaning
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -42,6 +42,7 @@ type GemRef struct {
 	node         *xrayUtils.GraphNode
 }
 
+// NodeName returns the reference string of the gem, used as its ID in the graph.
 func (gr *GemRef) NodeName() string { return gr.Ref }
 func (gr *GemRef) Node(children ...*xrayUtils.GraphNode) *xrayUtils.GraphNode {
 	if gr.node == nil {
@@ -51,6 +52,7 @@ func (gr *GemRef) Node(children ...*xrayUtils.GraphNode) *xrayUtils.GraphNode {
 	return gr.node
 }
 
+// GemGraphInput represents the top-level structure for unmarshalling the gem dependency graph.
 type GemGraphInput struct {
 	Graph struct {
 		Nodes map[string]GemRef `json:"nodes"`
@@ -125,9 +127,15 @@ func getGemCmd(execPath, workingDir, cmd string, args ...string) *io.Command {
 	return command
 }
 
-func calculateDependencies(bundleExecPath, workingDir string, params cliUtils.AuditParams) (dependencyTrees []*xrayUtils.GraphNode, uniqueDeps []string, err error) {
+// calculateDependencies orchestrates the generation and parsing of Gemfile.lock to build the dependency graph.
+// It first runs 'bundle lock' to ensure Gemfile.lock is up-to-date, then parses the lock file,
+// unmarshals it into an internal structure, and finally builds the Xray-compatible graph.
+// Returns:
+//
+//	dependencyTrees: A slice of top-level dependency nodes.
+//	uniqueDeps: A slice of unique dependency IDs found in the graph.
+func calculateDependencies(bundleExecPath, workingDir string, _ cliUtils.AuditParams) (dependencyTrees []*xrayUtils.GraphNode, uniqueDeps []string, err error) {
 	log.Debug("Ensuring Gemfile.lock is up to date using 'bundle lock'...")
-	// The output of 'bundle lock' is not directly used, its purpose is to update/create Gemfile.lock
 	if _, err = getGemCmd(bundleExecPath, workingDir, "lock").RunWithOutput(); err != nil {
 		err = fmt.Errorf("failed to execute 'bundle lock': %w. Ensure Gemfile is present and bundle can run", err)
 		return
@@ -154,11 +162,7 @@ func calculateDependencies(bundleExecPath, workingDir string, params cliUtils.Au
 		return []*xrayUtils.GraphNode{}, []string{}, nil
 	}
 
-	projectRootNode, errParser := buildFullGemDependencyGraph(gemInput)
-	if errParser != nil {
-		err = fmt.Errorf("failed to build full gem dependency graph: %w", errParser)
-		return
-	}
+	projectRootNode := buildFullGemDependencyGraph(gemInput)
 
 	if projectRootNode != nil && projectRootNode.Nodes != nil {
 		dependencyTrees = projectRootNode.Nodes
@@ -172,6 +176,7 @@ func calculateDependencies(bundleExecPath, workingDir string, params cliUtils.Au
 	return
 }
 
+// parseLockfileToInternalData parses a Gemfile.lock file line by line to extract gem specifications and their dependencies.
 func parseLockfileToInternalData(lockFilePath string) (
 	orderedGems []*internalGemRef,
 	resolvedVersions map[string]string,
@@ -188,29 +193,31 @@ func parseLockfileToInternalData(lockFilePath string) (
 	resolvedVersions = make(map[string]string)
 	var currentGem *internalGemRef
 	currentState := stateSearchGEM
+	sectionTerminators := map[string]bool{"DEPENDENCIES": true, "PLATFORMS": true, "RUBY VERSION": true, "BUNDLED WITH": true, "GIT": true, "PATH": true, "PLUGIN SOURCE": true}
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		trimmedLine := strings.TrimSpace(line)
+
 		switch currentState {
 		case stateSearchGEM:
 			if trimmedLine == "GEM" {
 				currentState = stateSearchSpecsKeyword
 			}
 		case stateSearchSpecsKeyword:
-			if line == "  specs:" || trimmedLine == "specs:" {
+			switch {
+			case line == "  specs:" || trimmedLine == "specs:":
 				currentState = stateInSpecsSection
-			} else if trimmedLine == "REMOTE" || trimmedLine == "SOURCE" {
+			case trimmedLine == "REMOTE" || trimmedLine == "SOURCE":
 				continue
-			} else if trimmedLine == "GEM" {
 			}
 		case stateInSpecsSection:
-			sectionTerminators := map[string]bool{"DEPENDENCIES": true, "PLATFORMS": true, "RUBY VERSION": true, "BUNDLED WITH": true, "GIT": true, "PATH": true, "PLUGIN SOURCE": true}
-			if sectionTerminators[trimmedLine] {
+			switch {
+			case sectionTerminators[trimmedLine]:
 				currentGem = nil
 				currentState = stateSearchGEM
 				continue
-			}
-			if strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "      ") {
+			case strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "      "):
 				parts := strings.SplitN(trimmedLine, " ", 2)
 				if len(parts) == 2 {
 					name, version := parts[0], strings.Trim(parts[1], "()")
@@ -225,7 +232,7 @@ func parseLockfileToInternalData(lockFilePath string) (
 				} else {
 					currentGem = nil
 				}
-			} else if strings.HasPrefix(line, "      ") && currentGem != nil {
+			case strings.HasPrefix(line, "      ") && currentGem != nil:
 				depParts := strings.SplitN(strings.TrimSpace(line), " ", 2)
 				if len(depParts) > 0 {
 					depName := depParts[0]
@@ -238,8 +245,9 @@ func parseLockfileToInternalData(lockFilePath string) (
 					}
 					currentGem.Dependencies[depName] = internalGemDep{Name: depName, Constraint: depConstraint}
 				}
-			} else if trimmedLine == "" {
-			} else if currentGem != nil && !strings.HasPrefix(line, " ") {
+			case trimmedLine == "":
+				// Empty line, do nothing
+			case currentGem != nil && !strings.HasPrefix(line, " "):
 				currentGem = nil
 				currentState = stateSearchGEM
 			}
@@ -252,6 +260,9 @@ func parseLockfileToInternalData(lockFilePath string) (
 	return
 }
 
+// parseGemfileLockDeps takes the path to a Gemfile.lock, parses it using parseLockfileToInternalData,
+// and then transforms the parsed data into a JSON conforming to the GemGraphInput structure.
+// This JSON is used before building the final Xray graph.
 func parseGemfileLockDeps(lockFilePath string) ([]byte, error) {
 	orderedInternalGems, resolvedVersions, err := parseLockfileToInternalData(lockFilePath)
 	if err != nil {
@@ -261,8 +272,8 @@ func parseGemfileLockDeps(lockFilePath string) ([]byte, error) {
 	for _, igem := range orderedInternalGems {
 		dependenciesForGemRef := make(map[string]GemDep, len(igem.Dependencies))
 		for depNameKey, internalDep := range igem.Dependencies {
+			var depRefString string
 			resolvedDepVersion, found := resolvedVersions[internalDep.Name]
-			depRefString := ""
 			if found {
 				depRefString = jsonGemPrefix + internalDep.Name + ":" + resolvedDepVersion
 			} else {
@@ -285,41 +296,39 @@ func parseGemfileLockDeps(lockFilePath string) ([]byte, error) {
 	return jsonData, nil
 }
 
-func parseGemDependencyGraphRecursive(id string, graph map[string]GemRef, visitedNodes map[string]*xrayUtils.GraphNode) (*xrayUtils.GraphNode, error) {
+// parseGemDependencyGraphRecursive recursively builds a single branch of the dependency graph.
+func parseGemDependencyGraphRecursive(id string, graph map[string]GemRef, visitedNodes map[string]*xrayUtils.GraphNode) *xrayUtils.GraphNode {
 	if node, ok := visitedNodes[id]; ok {
-		return node, nil
+		return node
 	}
 	gemRef, ok := graph[id]
 	if !ok {
 		log.Debug("Warning: Gem with ID '%s' not found in graph map. Creating as leaf node.", id)
 		leafNode := &xrayUtils.GraphNode{Id: id, Nodes: []*xrayUtils.GraphNode{}}
 		visitedNodes[id] = leafNode
-		return leafNode, nil
+		return leafNode
 	}
 	childrenNodes := make([]*xrayUtils.GraphNode, 0)
 	for _, dep := range gemRef.Dependencies {
 		if !dep.Direct {
 			continue
 		}
-		parsedNode, err := parseGemDependencyGraphRecursive(dep.Ref, graph, visitedNodes)
-		if err != nil {
-			log.Debug("Error parsing child dependency '%s' for '%s': %v. Skipping.", dep.Ref, id, err)
-			continue
-		}
+		parsedNode := parseGemDependencyGraphRecursive(dep.Ref, graph, visitedNodes)
 		if parsedNode != nil {
 			childrenNodes = append(childrenNodes, parsedNode)
 		}
 	}
 	resultNode := gemRef.Node(childrenNodes...)
 	visitedNodes[id] = resultNode
-	return resultNode, nil
+	return resultNode
 }
 
-func buildFullGemDependencyGraph(graphInput GemGraphInput) (*xrayUtils.GraphNode, error) {
+// buildFullGemDependencyGraph constructs the complete dependency graph from the GemGraphInput.
+func buildFullGemDependencyGraph(graphInput GemGraphInput) *xrayUtils.GraphNode {
 	visitedNodes := make(map[string]*xrayUtils.GraphNode)
 	if len(graphInput.Graph.Nodes) == 0 {
 		log.Debug("No nodes provided in graphInput to build dependency graph.")
-		return &xrayUtils.GraphNode{Id: gemVirtualRootID, Nodes: []*xrayUtils.GraphNode{}}, nil
+		return &xrayUtils.GraphNode{Id: gemVirtualRootID, Nodes: []*xrayUtils.GraphNode{}}
 	}
 	var rootChildrenNodes []*xrayUtils.GraphNode
 	allDepRefs := make(map[string]bool)
@@ -330,18 +339,15 @@ func buildFullGemDependencyGraph(graphInput GemGraphInput) (*xrayUtils.GraphNode
 	}
 	for gemID := range graphInput.Graph.Nodes {
 		if !allDepRefs[gemID] {
-			parsedNode, err := parseGemDependencyGraphRecursive(gemID, graphInput.Graph.Nodes, visitedNodes)
-			if err != nil {
-				log.Debug("Error parsing subtree for root candidate '%s': %v. Skipping.", gemID, err)
-				continue
-			}
+			parsedNode := parseGemDependencyGraphRecursive(gemID, graphInput.Graph.Nodes, visitedNodes)
 			if parsedNode != nil {
 				rootChildrenNodes = append(rootChildrenNodes, parsedNode)
 			}
 		}
 	}
-	return &xrayUtils.GraphNode{Id: gemVirtualRootID, Nodes: rootChildrenNodes}, nil
+	return &xrayUtils.GraphNode{Id: gemVirtualRootID, Nodes: rootChildrenNodes}
 }
+
 func parseMajorMinor(version string) (major, minor int, err error) {
 	re := regexp.MustCompile(`^(\d+)\.(\d+)`)
 	matches := re.FindStringSubmatch(version)

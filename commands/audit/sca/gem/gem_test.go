@@ -35,17 +35,21 @@ func TestBuildDependencyTree(t *testing.T) {
 	defer cleanUp()
 	params := &utils.AuditBasicParams{}
 	actualTopLevelTrees, uniqueDeps, err := BuildDependencyTree(params)
-	assert.NoError(t, err)
+	assert.NoError(t, err, "BuildDependencyTree should not return an error")
 	expectedTopLevelTrees := expectedResult.Nodes
-	expectedJSON, _ := json.MarshalIndent(expectedTopLevelTrees, "", "  ")
-	actualJSON, _ := json.MarshalIndent(actualTopLevelTrees, "", "  ")
+	expectedJSON, err := json.MarshalIndent(expectedTopLevelTrees, "", "  ")
+	assert.NoError(t, err, "Failed to marshal expectedTopLevelTrees")
+	actualJSON, err := json.MarshalIndent(actualTopLevelTrees, "", "  ")
+	assert.NoError(t, err, "Failed to marshal actualTopLevelTrees")
 	if !reflect.DeepEqual(expectedTopLevelTrees, actualTopLevelTrees) {
 		t.Errorf("Dependency tree mismatch.\nExpected (JSON):\n%s\nGot (JSON):\n%s",
 			string(expectedJSON), string(actualJSON))
 	}
-	assert.ElementsMatch(t, uniqueDeps, expectedUniqueDeps, "First is actual, Second is Expected")
+	assert.ElementsMatch(t, uniqueDeps, expectedUniqueDeps, "Unique dependencies mismatch. First is actual, Second is Expected")
 }
 
+// expectedUniqueDeps should be defined
+// expectedUniqueDeps := []string{"rubygems://puma:5.6.9", "rubygems://nio4r:2.7.4"}
 func TestCalculateUniqueDeps(t *testing.T) {
 	var input = &xrayUtils.GraphNode{
 		Id: "root",
