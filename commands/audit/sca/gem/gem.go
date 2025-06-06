@@ -29,6 +29,16 @@ const (
 	stateInSpecsSection
 )
 
+var sectionTerminators = map[string]bool{
+	"DEPENDENCIES":  true,
+	"PLATFORMS":     true,
+	"RUBY VERSION":  true,
+	"BUNDLED WITH":  true,
+	"GIT":           true,
+	"PATH":          true,
+	"PLUGIN SOURCE": true,
+}
+
 type GemDep struct {
 	Ref    string `json:"ref"`
 	Direct bool   `json:"direct"`
@@ -184,80 +194,118 @@ func parseLockfileToInternalData(lockFilePath string) (
 ) {
 	file, ioErr := os.Open(lockFilePath)
 	if ioErr != nil {
-		err = fmt.Errorf("opening lockfile %s: %w", lockFilePath, ioErr)
-		return
+		return nil, nil, fmt.Errorf("opening lockfile %s: %w", lockFilePath, ioErr)
 	}
 	defer file.Close()
+
 	scanner := bufio.NewScanner(file)
+
+	if !advanceToSpecs(scanner) {
+		return []*internalGemRef{}, make(map[string]string), nil
+	}
+
+	orderedGems, resolvedVersions = parseSpecsSection(scanner)
+
+	if scanErr := scanner.Err(); scanErr != nil {
+		return nil, nil, fmt.Errorf("error scanning lockfile: %w", scanErr)
+	}
+
+	return orderedGems, resolvedVersions, nil
+}
+
+// advanceToSpecs moves the scanner to the line immediately following the "specs:" heading.
+// It returns true if the section is found, and false otherwise.
+func advanceToSpecs(scanner *bufio.Scanner) bool {
+	foundGemBlock := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !foundGemBlock {
+			if line == "GEM" {
+				foundGemBlock = true
+			}
+			continue
+		}
+		if line == "specs:" {
+			return true
+		}
+	}
+	return false // Reached end of file without finding the section.
+}
+
+// parseSpecsSection processes the lines within the "specs:" block of the lockfile.
+// It uses indentation levels to distinguish between gems and their dependencies.
+func parseSpecsSection(scanner *bufio.Scanner) (
+	orderedGems []*internalGemRef,
+	resolvedVersions map[string]string,
+) {
 	orderedGems = []*internalGemRef{}
 	resolvedVersions = make(map[string]string)
 	var currentGem *internalGemRef
-	currentState := stateSearchGEM
-	sectionTerminators := map[string]bool{"DEPENDENCIES": true, "PLATFORMS": true, "RUBY VERSION": true, "BUNDLED WITH": true, "GIT": true, "PATH": true, "PLUGIN SOURCE": true}
 
 	for scanner.Scan() {
 		line := scanner.Text()
 		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
+			currentGem = nil
+			continue
+		}
 
-		switch currentState {
-		case stateSearchGEM:
-			if trimmedLine == "GEM" {
-				currentState = stateSearchSpecsKeyword
+		if sectionTerminators[trimmedLine] {
+			break
+		}
+
+		indentation := countLeadingSpaces(line)
+
+		switch indentation {
+		case 4:
+			parts := strings.SplitN(trimmedLine, " ", 2)
+			if len(parts) == 2 {
+				name, version := parts[0], strings.Trim(parts[1], "()")
+
+				ref := internalPackagePrefix + name + ":" + version
+				currentGem = &internalGemRef{
+					Ref:          ref,
+					Name:         name,
+					Version:      version,
+					Dependencies: make(map[string]internalGemDep),
+				}
+				orderedGems = append(orderedGems, currentGem)
+				resolvedVersions[name] = version
+			} else {
+
+				currentGem = nil
 			}
-		case stateSearchSpecsKeyword:
-			switch {
-			case line == "  specs:" || trimmedLine == "specs:":
-				currentState = stateInSpecsSection
-			case trimmedLine == "REMOTE" || trimmedLine == "SOURCE":
+		case 6:
+			if currentGem == nil {
 				continue
 			}
-		case stateInSpecsSection:
-			switch {
-			case sectionTerminators[trimmedLine]:
-				currentGem = nil
-				currentState = stateSearchGEM
-				continue
-			case strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "      "):
-				parts := strings.SplitN(trimmedLine, " ", 2)
-				if len(parts) == 2 {
-					name, version := parts[0], strings.Trim(parts[1], "()")
-					if name == "" || version == "" {
-						currentGem = nil
-						continue
-					}
-					ref := internalPackagePrefix + name + ":" + version
-					currentGem = &internalGemRef{Ref: ref, Name: name, Version: version, Dependencies: make(map[string]internalGemDep)}
-					orderedGems = append(orderedGems, currentGem)
-					resolvedVersions[name] = version
-				} else {
-					currentGem = nil
+			depParts := strings.SplitN(trimmedLine, " ", 2)
+			if len(depParts) > 0 && depParts[0] != "" {
+				depName := depParts[0]
+				depConstraint := ""
+				if len(depParts) > 1 {
+					depConstraint = strings.Trim(depParts[1], "()")
 				}
-			case strings.HasPrefix(line, "      ") && currentGem != nil:
-				depParts := strings.SplitN(strings.TrimSpace(line), " ", 2)
-				if len(depParts) > 0 {
-					depName := depParts[0]
-					depConstraint := ""
-					if len(depParts) > 1 {
-						depConstraint = depParts[1]
-					}
-					if depName == "" {
-						continue
-					}
-					currentGem.Dependencies[depName] = internalGemDep{Name: depName, Constraint: depConstraint}
-				}
-			case trimmedLine == "":
-				// Empty line, do nothing
-			case currentGem != nil && !strings.HasPrefix(line, " "):
-				currentGem = nil
-				currentState = stateSearchGEM
+				currentGem.Dependencies[depName] = internalGemDep{Name: depName, Constraint: depConstraint}
 			}
+		default:
+			// A line with unexpected indentation is treated as a separator.
+			// This makes parsing robust against comments or malformed lines.
+			currentGem = nil
 		}
 	}
-	if scanErr := scanner.Err(); scanErr != nil {
-		err = fmt.Errorf("scanning lockfile: %w", scanErr)
-		return
+
+	return orderedGems, resolvedVersions
+}
+
+// countLeadingSpaces returns the number of leading space characters in a string.
+func countLeadingSpaces(s string) int {
+	for i, r := range s {
+		if r != ' ' {
+			return i
+		}
 	}
-	return
+	return len(s)
 }
 
 // parseGemfileLockDeps takes the path to a Gemfile.lock, parses it using parseLockfileToInternalData,
