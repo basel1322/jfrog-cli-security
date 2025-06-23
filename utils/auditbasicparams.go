@@ -36,8 +36,16 @@ type AuditParams interface {
 	IgnoreConfigFile() bool
 	SetIgnoreConfigFile(ignoreConfigFile bool) *AuditBasicParams
 	IsMavenDepTreeInstalled() bool
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 	SetIsMavenDepTreeInstalled(isMavenDepTreeInstalled bool) *AuditBasicParams
 	SetIsGradleDepTreeInstalled(isGradleDepTreeInstalled bool) *AuditBasicParams
+	SetIsMavenDepTreeInstalled(isGemDepTreeInstalled bool) *AuditBasicParams
+	IsRubyDepTreeInstalled() bool
+	SetIsRubyDepTreeInstalled(isGemDepTreeInstalled bool) *AuditBasicParams
+	SetIsMavenDepTreeInstalled(isGemDepTreeInstalled bool) *AuditBasicParams
+	IsRubyDepTreeInstalled() bool
+	SetIsRubyDepTreeInstalled(isGemDepTreeInstalled bool) *AuditBasicParams
 	IsCurationCmd() bool
 	SetIsCurationCmd(bool) *AuditBasicParams
 	SetExclusions(exclusions []string) *AuditBasicParams
@@ -60,7 +68,11 @@ type AuditBasicParams struct {
 	insecureTls                      bool
 	ignoreConfigFile                 bool
 	isMavenDepTreeInstalled          bool
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 	isGradleDepTreeInstalled         bool
+	isGemDepTreeInstalled            bool
+	isGemDepTreeInstalled            bool
 	isCurationCmd                    bool
 	maxTreeDepth                     string
 	pipRequirementsFile              string
@@ -265,6 +277,24 @@ func (abp *AuditBasicParams) IsGradleDepTreeInstalled() bool {
 }
 func (abp *AuditBasicParams) SetIsGradleDepTreeInstalled(isGradleDepTreeInstalled bool) *AuditBasicParams {
 	abp.isGradleDepTreeInstalled = isGradleDepTreeInstalled
+	return abp
+}
+
+func (abp *AuditBasicParams) IsRubyDepTreeInstalled() bool {
+	return abp.isGemDepTreeInstalled
+}
+
+func (abp *AuditBasicParams) SetIsRubyDepTreeInstalled(isGemDepTreeInstalled bool) *AuditBasicParams {
+	abp.isGemDepTreeInstalled = isGemDepTreeInstalled
+	return abp
+}
+
+func (abp *AuditBasicParams) IsRubyDepTreeInstalled() bool {
+	return abp.isGemDepTreeInstalled
+}
+
+func (abp *AuditBasicParams) SetIsRubyDepTreeInstalled(isGemDepTreeInstalled bool) *AuditBasicParams {
+	abp.isGemDepTreeInstalled = isGemDepTreeInstalled
 	return abp
 }
 

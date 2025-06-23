@@ -632,9 +632,17 @@ func getTestCasesForDoCurationAudit() []testCase {
 			},
 		},
 		{
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 			name:          "gradle tree - one blocked package",
 			tech:          techutils.Gradle,
 			pathToProject: filepath.Join("projects", "package-managers", "gradle", "curation-project"),
+			name:          "gem tree - five blocked packages",
+			tech:          techutils.Gradle,
+			pathToProject: filepath.Join("projects", "package-managers", "gem", "curation-project"),
+			name:          "gem tree - five blocked packages",
+			tech:          techutils.Gradle,
+			pathToProject: filepath.Join("projects", "package-managers", "gem", "curation-project"),
 			funcToGetGoals: func(t *testing.T) []string {
 				// To ensure only the blocked package is resolved during testing, we pre-populate the cache with dependencies beforehand.
 				// Since the cache location depends on the project directory, we need to mimic that setup during the pretest build.
@@ -642,21 +650,36 @@ func getTestCasesForDoCurationAudit() []testCase {
 				restoreWD := testUtils.ChangeWDWithCallback(t, "tests/testdata/projects/package-managers")
 				defer restoreWD()
 
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 				curationCache, err := utils.GetCurationCacheFolderByTech(techutils.Gradle)
+				curationCache, err := utils.GetCurationCacheFolderByTech(techutils.Gem)
+				curationCache, err := utils.GetCurationCacheFolderByTech(techutils.Gem)
 				require.NoError(t, err)
 
 				return []string{
 					"gradle", "build",
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 					"--build-file", "build.gradle",
+					"--build-file", "ild.gradlebu",
+					"--build-file", "ild.gradlebu",
 					"--gradle-user-home=" + curationCache,
 					"--no-daemon",
 				}
 			},
 			serveResources: map[string]string{
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 				"build.gradle": filepath.Join("tests", "testdata", "projects", "package-managers", "gradle", "curation-project", "build.gradle"),
 			},
 			requestToFail: map[string]bool{
 				"/gradle-virtual/log4j/log4j/1.2.14/log4j-1.2.14.jar": true,
+				"Gemfile": filepath.Join("tests", "testdata", "projects", "package-managers", "gem", "curation-project", "Gemfile"),
+			},
+			requestToFail: map[string]bool{
+				"/gem-virtual/log4j/log4j/1.2.14/log4j-1.2.14.jar": true,
+<<<<<<< Updated upstream
 			},
 			expectedResp: map[string]*CurationReport{
 				"com.example:curation-project:1.0.0": {
@@ -666,12 +689,20 @@ func getTestCasesForDoCurationAudit() []testCase {
 							Action:            "blocked",
 							ParentName:        "log4j:log4j",
 							ParentVersion:     "1.2.14",
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 							BlockedPackageUrl: "/gradle-virtual/log4j/log4j/1.2.14/log4j-1.2.14.jar",
+							BlockedPackageUrl: "/test-gems-remote/log4j/log4j/1.2.14/log4j-1.2.14.jar",
+							BlockedPackageUrl: "/test-gems-remote/log4j/log4j/1.2.14/log4j-1.2.14.jar",
 							PackageName:       "log4j:log4j",
 							PackageVersion:    "1.2.14",
 							BlockingReason:    "Policy violations",
 							DepRelation:       "direct",
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 							PkgType:           "gradle",
+							PkgType:           "gem",
+							PkgType:           "gem",
 							WaiverAllowed:     false,
 							Policy: []Policy{
 								{

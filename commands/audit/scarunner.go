@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	biutils "github.com/jfrog/build-info-go/utils"
 	"github.com/jfrog/jfrog-cli-security/commands/audit/sca/conan"
+	"github.com/jfrog/jfrog-cli-security/commands/audit/sca/gem"
 	"github.com/jfrog/jfrog-cli-security/commands/audit/sca/swift"
 	"github.com/jfrog/jfrog-client-go/utils/io/fileutils"
 	"golang.org/x/exp/slices"
@@ -262,6 +264,8 @@ func GetTechDependencyTree(params xrayutils.AuditParams, artifactoryServerDetail
 		depTreeResult.FullDepTrees, uniqueDeps, err = pnpm.BuildDependencyTree(params)
 	case techutils.Conan:
 		depTreeResult.FullDepTrees, uniqueDeps, err = conan.BuildDependencyTree(params)
+	case techutils.Gem:
+		depTreeResult.FullDepTrees, uniqueDeps, err = gem.BuildDependencyTree(params)
 	case techutils.Yarn:
 		depTreeResult.FullDepTrees, uniqueDeps, err = yarn.BuildDependencyTree(params)
 	case techutils.Go:

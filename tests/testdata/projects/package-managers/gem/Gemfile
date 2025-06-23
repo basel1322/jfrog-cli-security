@@ -2,3 +2,18 @@ source "https://rubygems.org"
 ruby "2.7.0"
 
 gem "puma", "~> 5.0"         # Web server   # Stylesheets
+
+gem 'rails', '~> 7.1.0'
+
+group :development do
+  gem 'web-console', '>= 4.1.0'
+  gem 'listen', '~> 3.3'
+  gem 'spring'
+end
+
+# Test only gems
+group :test do
+  gem 'capybara'
+  gem 'selenium-webdriver'
+  gem 'webdrivers'
+end
