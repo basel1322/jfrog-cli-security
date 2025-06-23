@@ -1,0 +1,24 @@
+source "https://rubygems.org"
+ruby "2.7.0"
+gem 'nokogiri', '1.10.10'
+
+# Rails 5.2.3 has multiple vulnerabilities (CVE-2020-8162, CVE-2020-8185, etc.)
+gem 'rails', '5.2.3'
+
+# Actionpack vulnerability (CVE-2021-22885)
+gem 'actionpack', '5.2.3'
+
+# Devise version with open redirect vulnerability
+gem 'devise', '4.7.1'
+
+# Loofah < 2.9.0 has XSS vulnerabilities
+gem 'loofah', '2.3.1'
+
+# Rack < 2.2.3 has multiple vulnerabilities (CVE-2020-8184)
+gem 'rack', '2.2.2'
+
+# JSON < 2.3.1 has potential vulnerabilities on certain platforms
+gem 'json', '2.2.0'
+
+# Puma < 4.3.5 has HTTP smuggling vulnerabilities
+gem 'puma', '4.3.3'

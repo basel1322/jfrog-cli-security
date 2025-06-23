@@ -94,12 +94,9 @@ var supportedTech = map[techutils.Technology]func(ca *CurationAuditCommand) (boo
 	techutils.Nuget: func(ca *CurationAuditCommand) (bool, error) {
 		return ca.checkSupportByVersionOrEnv(techutils.Nuget, MinArtiNuGetSupport)
 	},
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
 	techutils.Gradle: func(ca *CurationAuditCommand) (bool, error) {
 		return ca.checkSupportByVersionOrEnv(techutils.Gradle, MinArtiGradlesupport)
-	techutils.Gem: func(ca *CurationAuditCommand) (bool, error) {
-		return ca.checkSupportByVersionOrEnv(techutils.Gem, MinArtiPassThroughSupport)
+	},
 	techutils.Gem: func(ca *CurationAuditCommand) (bool, error) {
 		return ca.checkSupportByVersionOrEnv(techutils.Gem, MinArtiPassThroughSupport)
 	},
@@ -920,12 +917,8 @@ func getUrlNameAndVersionByTech(tech techutils.Technology, node *xrayUtils.Graph
 		return getNpmNameScopeAndVersion(node.Id, artiUrl, repo, techutils.Npm.String())
 	case techutils.Maven:
 		return getMavenNameScopeAndVersion(node.Id, artiUrl, repo, node)
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
 	case techutils.Gradle:
 		return getGradleNameScopeAndVersion(node.Id, artiUrl, repo, node)
-	case techutils.Gem:
-		return getGemNameScopeAndVersion(node.Id, artiUrl, repo, node)
 	case techutils.Gem:
 		return getGemNameScopeAndVersion(node.Id, artiUrl, repo, node)
 	case techutils.Pip:
