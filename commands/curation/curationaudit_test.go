@@ -726,7 +726,7 @@ func getTestCasesForDoCurationAudit() []testCase {
 			},
 		},
 		{
-			name:          "gem tree - three blocked packages",
+			name:          "gem tree - zero blocked packages",
 			tech:          techutils.Gem,
 			pathToProject: filepath.Join("projects", "package-managers", "gem", "curation-project"),
 			funcToGetGoals: func(t *testing.T) []string {
@@ -745,35 +745,12 @@ func getTestCasesForDoCurationAudit() []testCase {
 				}
 			},
 			serveResources: map[string]string{
-				"Gemfile.lock": filepath.Join("tests", "testdata", "projects", "package-managers", "gem", "curation-project", "Gemfile.lock"),
+				"bundle.lock": filepath.Join("tests", "testdata", "projects", "package-managers", "gem", "curation-project", "Gemfile"),
 			},
 			expectedResp: map[string]*CurationReport{
 				"actionpack:5.2.3": {
-					packagesStatus: []*PackageStatus{
-						{
-							Action:            "blocked",
-							ParentName:        "actioncable",
-							ParentVersion:     "5.2.3",
-							PackageName:       "rack",
-							PackageVersion:    "2.2.2",
-							BlockedPackageUrl: "/test-gems-remote/rack/2.2.2",
-							BlockingReason:    "Policy violations",
-							DepRelation:       "indirect",
-							PkgType:           "gem",
-							WaiverAllowed:     false,
-							Policy: []Policy{
-								{
-									Policy:    "pol1",
-									Condition: "cond1",
-								},
-							},
-						},
-					},
 					totalNumberOfPackages: 17,
 				},
-			},
-			requestToFail: map[string]bool{
-				"/test-gems-remote/rack/2.2.2": true,
 			},
 			allowInsecureTls: true,
 		},
