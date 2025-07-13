@@ -937,7 +937,7 @@ func getUrlNameAndVersionByTech(tech techutils.Technology, node *xrayUtils.Graph
 	case techutils.Gradle:
 		return getGradleNameScopeAndVersion(node.Id, artiUrl, repo, node)
 	case techutils.Gem:
-		return getGemNameScopeAndVersion(node.Id, artiUrl, repo, node)
+		return getGemNameScopeAndVersion(node.Id, artiUrl, repo)
 	case techutils.Pip:
 		downloadUrls, name, version = getPythonNameVersion(node.Id, downloadUrlsMap)
 		return
@@ -1005,9 +1005,12 @@ func getGoNameScopeAndVersion(id, artiUrl, repo string) (downloadUrls []string, 
 }
 
 // https://hts1.jfrog.io/artifactory/api/gems/test-gems-remote/gems/devise-4.7.1.gem -O -L
-func getGemNameScopeAndVersion(id, artiUrl, repo string, node *xrayUtils.GraphNode) (downloadUrls []string, name, scope, version string) {
+func getGemNameScopeAndVersion(id, artiUrl, repo string) (downloadUrls []string, name, scope, version string) {
 	id = strings.TrimPrefix(id, "rubygems://")
 	allParts := strings.Split(id, ":")
+	if len(allParts) != 2 {
+		return nil, "", "", ""
+	}
 	nameVersion := allParts[0] + "-" + allParts[1]
 	packagePath := "/" + nameVersion
 	downloadUrls = append(downloadUrls, strings.TrimSuffix(artiUrl, "/")+"/api/gems/"+repo+"/gems"+packagePath+".gem")
