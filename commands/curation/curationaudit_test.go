@@ -726,6 +726,58 @@ func getTestCasesForDoCurationAudit() []testCase {
 			},
 		},
 		{
+			name:          "gem tree - three blocked packages",
+			tech:          techutils.Gem,
+			pathToProject: filepath.Join("projects", "package-managers", "gem", "curation-project"),
+			funcToGetGoals: func(t *testing.T) []string {
+				restoreWD := testUtils.ChangeWDWithCallback(t, "tests/testdata/projects/package-managers")
+
+				defer restoreWD()
+
+				curationCache, err := utils.GetCurationCacheFolderByTech(techutils.Gem)
+				require.NoError(t, err)
+
+				return []string{
+					"bundle", "lock",
+					"--build-file", "Gemfile",
+					"--gem-user-home=" + curationCache,
+					"--no-daemon",
+				}
+			},
+			serveResources: map[string]string{
+				"Gemfile.lock": filepath.Join("tests", "testdata", "projects", "package-managers", "gem", "curation-project", "Gemfile.lock"),
+			},
+			expectedResp: map[string]*CurationReport{
+				"actionpack:5.2.3": {
+					packagesStatus: []*PackageStatus{
+						{
+							Action:            "blocked",
+							ParentName:        "actioncable",
+							ParentVersion:     "5.2.3",
+							PackageName:       "rack",
+							PackageVersion:    "2.2.2",
+							BlockedPackageUrl: "/test-gems-remote/rack/2.2.2",
+							BlockingReason:    "Policy violations",
+							DepRelation:       "indirect",
+							PkgType:           "gem",
+							WaiverAllowed:     false,
+							Policy: []Policy{
+								{
+									Policy:    "pol1",
+									Condition: "cond1",
+								},
+							},
+						},
+					},
+					totalNumberOfPackages: 17,
+				},
+			},
+			requestToFail: map[string]bool{
+				"/test-gems-remote/rack/2.2.2": true,
+			},
+			allowInsecureTls: true,
+		},
+		{
 			name:          "maven tree - one blocked package",
 			tech:          techutils.Maven,
 			pathToProject: filepath.Join("projects", "package-managers", "maven", "maven-curation"),

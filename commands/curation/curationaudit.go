@@ -98,6 +98,9 @@ var supportedTech = map[techutils.Technology]func(ca *CurationAuditCommand) (boo
 	techutils.Gradle: func(ca *CurationAuditCommand) (bool, error) {
 		return ca.checkSupportByVersionOrEnv(techutils.Gradle, MinArtiGradlesupport)
 	},
+	techutils.Gem: func(ca *CurationAuditCommand) (bool, error) {
+		return ca.checkSupportByVersionOrEnv(techutils.Gem, MinArtiPassThroughSupport)
+	},
 }
 
 func (ca *CurationAuditCommand) checkSupportByVersionOrEnv(tech techutils.Technology, minArtiVersion string) (bool, error) {
@@ -933,6 +936,8 @@ func getUrlNameAndVersionByTech(tech techutils.Technology, node *xrayUtils.Graph
 		return getMavenNameScopeAndVersion(node.Id, artiUrl, repo, node)
 	case techutils.Gradle:
 		return getGradleNameScopeAndVersion(node.Id, artiUrl, repo, node)
+	case techutils.Gem:
+		return getGemNameScopeAndVersion(node.Id, artiUrl, repo, node)
 	case techutils.Pip:
 		downloadUrls, name, version = getPythonNameVersion(node.Id, downloadUrlsMap)
 		return
@@ -997,6 +1002,16 @@ func getGoNameScopeAndVersion(id, artiUrl, repo string) (downloadUrls []string, 
 	}
 	url := strings.TrimSuffix(artiUrl, "/") + "/api/go/" + repo + "/" + name + "/@v/" + version + ".zip"
 	return []string{url}, name, "", version
+}
+
+// https://hts1.jfrog.io/artifactory/api/gems/test-gems-remote/gems/devise-4.7.1.gem -O -L
+func getGemNameScopeAndVersion(id, artiUrl, repo string, node *xrayUtils.GraphNode) (downloadUrls []string, name, scope, version string) {
+	id = strings.TrimPrefix(id, "rubygems://")
+	allParts := strings.Split(id, ":")
+	nameVersion := allParts[0] + "-" + allParts[1]
+	packagePath := "/" + nameVersion
+	downloadUrls = append(downloadUrls, strings.TrimSuffix(artiUrl, "/")+"/api/gems/"+repo+"/gems"+packagePath+".gem")
+	return downloadUrls, strings.Join(allParts[:1], ":"), "", allParts[1]
 }
 
 // input(with classifier) - id: gav://org.apache.tomcat.embed:tomcat-embed-jasper:8.0.33-jdk15
