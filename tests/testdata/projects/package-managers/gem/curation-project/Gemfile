@@ -1,5 +1,4 @@
 source "https://rubygems.org"
-ruby "2.6.10"
+ruby "2.7.0"
 
-gem "puma", "~> 5.0"         # Web server   # Stylesheets
-
+gem 'actionpack', '5.2.3'
