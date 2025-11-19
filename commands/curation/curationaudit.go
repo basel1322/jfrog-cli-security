@@ -37,6 +37,7 @@ import (
 	"github.com/jfrog/jfrog-cli-security/commands/audit"
 	"github.com/jfrog/jfrog-cli-security/sca/bom/buildinfo"
 	"github.com/jfrog/jfrog-cli-security/sca/bom/buildinfo/technologies"
+	"github.com/jfrog/jfrog-cli-security/sca/bom/buildinfo/technologies/docker"
 	"github.com/jfrog/jfrog-cli-security/sca/bom/buildinfo/technologies/python"
 	"github.com/jfrog/jfrog-cli-security/utils"
 	"github.com/jfrog/jfrog-cli-security/utils/formats"
@@ -101,6 +102,12 @@ var supportedTech = map[techutils.Technology]func(ca *CurationAuditCommand) (boo
 	},
 	techutils.Gem: func(ca *CurationAuditCommand) (bool, error) {
 		return ca.checkSupportByVersionOrEnv(techutils.Gem, MinArtiGradleGemSupport)
+	},
+	techutils.Docker: func(ca *CurationAuditCommand) (bool, error) {
+		if ca.DockerImageName() != "" {
+			return true, nil
+		}
+		return false, nil
 	},
 }
 
@@ -209,6 +216,8 @@ type treeAnalyzer struct {
 	tech                 techutils.Technology
 	parallelRequests     int
 	downloadUrls         map[string]string
+	serverDetails        *config.ServerDetails
+	dockerImageName      string
 }
 
 type CurationAuditCommand struct {
@@ -350,6 +359,9 @@ func getPolicyAndConditionId(policy, condition string) string {
 
 func (ca *CurationAuditCommand) doCurateAudit(results map[string]*CurationReport) error {
 	techs := techutils.DetectedTechnologiesList()
+	if ca.DockerImageName() != "" {
+		techs = []string{techutils.Docker.String()}
+	}
 	for _, tech := range techs {
 		supportedFunc, ok := supportedTech[techutils.Technology(tech)]
 		if !ok {
@@ -390,8 +402,18 @@ func (ca *CurationAuditCommand) getRtManagerAndAuth(tech techutils.Technology) (
 
 func (ca *CurationAuditCommand) GetAuth(tech techutils.Technology) (serverDetails *config.ServerDetails, err error) {
 	if ca.PackageManagerConfig == nil {
-		if err = ca.SetRepo(tech); err != nil {
-			return
+		if tech == techutils.Docker {
+			serverDetails, err = ca.ServerDetails()
+			if err != nil {
+				return
+			}
+			if repoConfig := docker.SetDockerRepo(serverDetails, ca.DockerImageName(), ca.DepsRepo(), ca.PackageManagerConfig); repoConfig != nil {
+				ca.setPackageManagerConfig(repoConfig)
+			}
+		} else {
+			if err = ca.SetRepo(tech); err != nil {
+				return
+			}
 		}
 	}
 	serverDetails, err = ca.PackageManagerConfig.ServerDetails()
@@ -426,6 +448,8 @@ func (ca *CurationAuditCommand) getBuildInfoParamsByTech() (technologies.BuildIn
 		NpmOverwritePackageLock: true,
 		// Python params
 		PipRequirementsFile: ca.PipRequirementsFile(),
+		// Docker params
+		DockerImageName: ca.DockerImageName(),
 	}, err
 }
 
@@ -456,7 +480,7 @@ func (ca *CurationAuditCommand) auditTree(tech techutils.Technology, results map
 	}
 	rootNode := depTreeResult.FullDepTrees[0]
 	// Extract project name from the dependency tree
-	_, projectName, projectScope, projectVersion := getUrlNameAndVersionByTech(tech, rootNode, nil, "", "")
+	_, projectName, projectScope, projectVersion := getUrlNameAndVersionByTech(tech, rootNode, nil, "", "", serverDetails, ca.DockerImageName())
 	// If the project name is not set, we use the current working directory name
 	if projectName == "" {
 		workPath, err := os.Getwd()
@@ -751,7 +775,7 @@ func (nc *treeAnalyzer) GraphsRelations(fullDependenciesTrees []*xrayUtils.Graph
 func (nc *treeAnalyzer) fillGraphRelations(node *xrayUtils.GraphNode, preProcessMap *sync.Map,
 	packagesStatus *[]*PackageStatus, parent, parentVersion string, visited *datastructures.Set[string], isRoot bool) {
 	for _, child := range node.Nodes {
-		packageUrls, name, scope, version := getUrlNameAndVersionByTech(nc.tech, child, nc.downloadUrls, nc.url, nc.repo)
+		packageUrls, name, scope, version := getUrlNameAndVersionByTech(nc.tech, child, nc.downloadUrls, nc.url, nc.repo, nc.serverDetails, nc.dockerImageName)
 		if isRoot {
 			parent = name
 			parentVersion = version
@@ -792,7 +816,9 @@ func (nc *treeAnalyzer) fetchNodesStatus(graph *xrayUtils.GraphNode, p *sync.Map
 		defer consumerProducer.Done()
 		for _, node := range graph.Nodes {
 			if _, ok := rootNodeIds[node.Id]; ok {
-				continue
+				if nc.tech != techutils.Docker {
+					continue
+				}
 			}
 			getTask := func(node xrayUtils.GraphNode) func(threadId int) error {
 				return func(threadId int) (err error) {
@@ -812,7 +838,7 @@ func (nc *treeAnalyzer) fetchNodesStatus(graph *xrayUtils.GraphNode, p *sync.Map
 }
 
 func (nc *treeAnalyzer) fetchNodeStatus(node xrayUtils.GraphNode, p *sync.Map) error {
-	packageUrls, name, scope, version := getUrlNameAndVersionByTech(nc.tech, &node, nc.downloadUrls, nc.url, nc.repo)
+	packageUrls, name, scope, version := getUrlNameAndVersionByTech(nc.tech, &node, nc.downloadUrls, nc.url, nc.repo, nc.serverDetails, nc.dockerImageName)
 	if len(packageUrls) == 0 {
 		return nil
 	}
@@ -930,7 +956,7 @@ func makeLegiblePolicyDetails(explanation, recommendation string) (string, strin
 	return explanation, recommendation
 }
 
-func getUrlNameAndVersionByTech(tech techutils.Technology, node *xrayUtils.GraphNode, downloadUrlsMap map[string]string, artiUrl, repo string) (downloadUrls []string, name string, scope string, version string) {
+func getUrlNameAndVersionByTech(tech techutils.Technology, node *xrayUtils.GraphNode, downloadUrlsMap map[string]string, artiUrl, repo string, serverDetails *config.ServerDetails, dockerImageName string) (downloadUrls []string, name string, scope string, version string) {
 	switch tech {
 	case techutils.Npm:
 		return getNpmNameScopeAndVersion(node.Id, artiUrl, repo, techutils.Npm.String())
@@ -948,6 +974,8 @@ func getUrlNameAndVersionByTech(tech techutils.Technology, node *xrayUtils.Graph
 	case techutils.Nuget:
 		downloadUrls, name, version = getNugetNameScopeAndVersion(node.Id, artiUrl, repo)
 		return
+	case techutils.Docker:
+		return getDockerNameScopeAndVersion(node.Id, artiUrl, repo, serverDetails, dockerImageName)
 	}
 	return
 }
@@ -1117,6 +1145,43 @@ func buildNpmDownloadUrl(url, repo, name, scope, version string) []string {
 		packageUrl = fmt.Sprintf("%s/api/npm/%s/%s/-/%s-%s.tgz", strings.TrimSuffix(url, "/"), repo, name, name, version)
 	}
 	return []string{packageUrl}
+}
+
+func getDockerNameScopeAndVersion(id, artiUrl, repo string, serverDetails *config.ServerDetails, imageName string) (downloadUrls []string, name, scope, version string) {
+	if artiUrl == "" && repo == "" {
+		id = strings.TrimPrefix(id, "docker://")
+		lastColonIndex := strings.LastIndex(id, ":")
+		if lastColonIndex > 0 {
+			name = id[:lastColonIndex]
+			version = id[lastColonIndex+1:]
+		} else {
+			name = id
+			version = "latest"
+		}
+		return
+	}
+
+	id = strings.TrimPrefix(id, "docker://")
+	lastColonIndex := strings.LastIndex(id, ":")
+	if lastColonIndex > 0 {
+		name = id[:lastColonIndex]
+		version = id[lastColonIndex+1:]
+	} else {
+		name = id
+		version = "latest"
+	}
+
+	if artiUrl != "" && repo != "" {
+		// Transform URL and repo for Docker if needed
+		if serverDetails != nil {
+			artiUrl, repo = docker.GetDockerUrlAndRepo(artiUrl, serverDetails, nil, imageName)
+		}
+		if artiUrl != "" && repo != "" {
+			downloadUrls = []string{fmt.Sprintf("%s/api/docker/%s/v2/%s/manifests/%s",
+				strings.TrimSuffix(artiUrl, "/"), repo, name, version)}
+		}
+	}
+	return
 }
 
 func GetCurationOutputFormat(formatFlagVal string) (format outFormat.OutputFormat, err error) {
