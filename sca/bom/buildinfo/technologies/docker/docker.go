@@ -1,10 +1,17 @@
 package docker
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	xrayUtils "github.com/jfrog/jfrog-client-go/xray/services/utils"
+
+	rtUtils "github.com/jfrog/jfrog-cli-core/v2/artifactory/utils"
+	"github.com/jfrog/jfrog-client-go/artifactory"
+	"github.com/jfrog/jfrog-client-go/auth"
+	"github.com/jfrog/jfrog-client-go/utils/io/httputils"
 
 	"github.com/jfrog/jfrog-cli-core/v2/common/project"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
@@ -20,12 +27,7 @@ func BuildDependencyTree(params technologies.BuildInfoBomGeneratorParams) (depen
 		return nil, nil, fmt.Errorf("docker image name is required")
 	}
 
-	imageName := strings.TrimSpace(params.DockerImageName)
-	if idx := strings.Index(imageName, ","); idx > 0 {
-		imageName = strings.TrimSpace(imageName[:idx])
-	}
-	imageName = strings.TrimSuffix(imageName, "/")
-
+	imageName := normalizeImageName(params.DockerImageName)
 	repo, pkgName, pkgVersion := extractRepoImageAndTag(imageName)
 	if repo == "" {
 		return nil, nil, fmt.Errorf("invalid docker image format: '%s'. Expected format: 'repo/path/image:tag' or 'repo/image:tag'", imageName)
@@ -35,14 +37,105 @@ func BuildDependencyTree(params technologies.BuildInfoBomGeneratorParams) (depen
 	}
 
 	pkgName = strings.TrimPrefix(pkgName, "library/")
-
 	imageRef := dockerPackagePrefix + pkgName + ":" + pkgVersion
-	rootNode := &xrayUtils.GraphNode{
-		Id:    "root",
-		Nodes: []*xrayUtils.GraphNode{{Id: imageRef}},
+	uniqueDeps = []string{imageRef}
+	childNodes := []*xrayUtils.GraphNode{{Id: imageRef}}
+
+	if hasServerDetails(params) {
+		shaRefs := getMultiArchShaRefs(params, repo, pkgName, pkgVersion)
+		if len(shaRefs) > 0 {
+			uniqueDeps = shaRefs
+			childNodes = createShaNodes(shaRefs)
+		}
 	}
 
-	return []*xrayUtils.GraphNode{rootNode}, []string{imageRef}, nil
+	return []*xrayUtils.GraphNode{{Id: "root", Nodes: childNodes}}, uniqueDeps, nil
+}
+
+func normalizeImageName(imageName string) string {
+	imageName = strings.TrimSpace(imageName)
+	if idx := strings.Index(imageName, ","); idx > 0 {
+		imageName = strings.TrimSpace(imageName[:idx])
+	}
+	return strings.TrimSuffix(imageName, "/")
+}
+
+func hasServerDetails(params technologies.BuildInfoBomGeneratorParams) bool {
+	return params.ServerDetails != nil && (params.ServerDetails.ArtifactoryUrl != "" || params.ServerDetails.Url != "")
+}
+
+func getMultiArchShaRefs(params technologies.BuildInfoBomGeneratorParams, repo, pkgName, pkgVersion string) []string {
+	rtManager, err := rtUtils.CreateServiceManager(params.ServerDetails, 2, 0, false)
+	if err != nil {
+		return nil
+	}
+
+	rtAuth, err := params.ServerDetails.CreateArtAuthConfig()
+	if err != nil {
+		return nil
+	}
+
+	manifestUrl := buildManifestUrl(params.ServerDetails, repo, pkgName, pkgVersion)
+	httpClientDetails := createDockerHttpClientDetails(rtAuth)
+
+	resp, _, err := rtManager.Client().SendHead(manifestUrl, &httpClientDetails)
+	if err != nil || resp == nil || resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.Contains(contentType, "manifest.list.v2+json") && !strings.Contains(contentType, "image.index.v1+json") {
+		return nil
+	}
+
+	manifestList := fetchManifestList(rtManager, manifestUrl, httpClientDetails)
+	if manifestList == nil || len(manifestList.Manifests) == 0 {
+		return nil
+	}
+
+	shaRefs := make([]string, 0, len(manifestList.Manifests))
+	for _, manifest := range manifestList.Manifests {
+		if manifest.Digest != "" {
+			shaRefs = append(shaRefs, dockerPackagePrefix+pkgName+":"+manifest.Digest)
+		}
+	}
+	return shaRefs
+}
+
+func buildManifestUrl(serverDetails *config.ServerDetails, repo, pkgName, pkgVersion string) string {
+	artiUrl := serverDetails.ArtifactoryUrl
+	if artiUrl == "" && serverDetails.Url != "" {
+		artiUrl = strings.TrimSuffix(serverDetails.Url, "/") + "/artifactory"
+	}
+	return fmt.Sprintf("%s/api/docker/%s/v2/%s/manifests/%s",
+		strings.TrimSuffix(artiUrl, "/"), repo, pkgName, pkgVersion)
+}
+
+func createDockerHttpClientDetails(rtAuth auth.ServiceDetails) httputils.HttpClientDetails {
+	httpClientDetails := rtAuth.CreateHttpClientDetails()
+	httpClientDetails.Headers["Accept"] = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v1+prettyjws, application/json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json"
+	return httpClientDetails
+}
+
+func fetchManifestList(rtManager artifactory.ArtifactoryServicesManager, manifestUrl string, httpClientDetails httputils.HttpClientDetails) *dockerManifestList {
+	resp, respBody, _, err := rtManager.Client().SendGet(manifestUrl, false, &httpClientDetails)
+	if err != nil || resp == nil || resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	var manifestList dockerManifestList
+	if err := json.Unmarshal(respBody, &manifestList); err != nil {
+		return nil
+	}
+	return &manifestList
+}
+
+func createShaNodes(shaRefs []string) []*xrayUtils.GraphNode {
+	nodes := make([]*xrayUtils.GraphNode, 0, len(shaRefs))
+	for _, shaRef := range shaRefs {
+		nodes = append(nodes, &xrayUtils.GraphNode{Id: shaRef})
+	}
+	return nodes
 }
 
 func extractRepoImageAndTag(imagePath string) (repo, image, tag string) {
@@ -58,26 +151,6 @@ func extractRepoImageAndTag(imagePath string) (repo, image, tag string) {
 	}
 
 	return parts[0], strings.Join(parts[1:], "/"), tag
-}
-
-func GetDockerUrlAndRepo(serverDetails *config.ServerDetails, packageManagerConfig *project.RepositoryConfig, imageName string) (artiUrl, repo string) {
-	if serverDetails == nil {
-		return "", ""
-	}
-
-	artiUrl = serverDetails.ArtifactoryUrl
-	if artiUrl == "" && serverDetails.Url != "" {
-		artiUrl = strings.TrimSuffix(serverDetails.Url, "/") + "/artifactory"
-	}
-
-	if packageManagerConfig != nil {
-		repo = packageManagerConfig.TargetRepo()
-	}
-	if repo == "" && imageName != "" {
-		repo, _, _ = extractRepoImageAndTag(imageName)
-	}
-
-	return
 }
 
 func GetDockerRepositoryConfig(serverDetails *config.ServerDetails, imageName, depsRepo, packageManagerRepo string) (*project.RepositoryConfig, error) {
@@ -101,14 +174,6 @@ func GetDockerRepositoryConfig(serverDetails *config.ServerDetails, imageName, d
 	return repoConfig, nil
 }
 
-func SetDockerRepo(serverDetails *config.ServerDetails, imageName, depsRepo string, existingRepoConfig *project.RepositoryConfig) (*project.RepositoryConfig, error) {
-	packageManagerRepo := ""
-	if existingRepoConfig != nil {
-		packageManagerRepo = existingRepoConfig.TargetRepo()
-	}
-	return GetDockerRepositoryConfig(serverDetails, imageName, depsRepo, packageManagerRepo)
-}
-
 func GetDockerRepoConfig(serverDetails *config.ServerDetails, imageName, depsRepo string) (*project.RepositoryConfig, error) {
 	if imageName == "" {
 		return nil, fmt.Errorf("docker image name is required. Use --image flag with format 'repo/path/image:tag'")
@@ -117,4 +182,10 @@ func GetDockerRepoConfig(serverDetails *config.ServerDetails, imageName, depsRep
 		return nil, fmt.Errorf("server details are required")
 	}
 	return GetDockerRepositoryConfig(serverDetails, imageName, depsRepo, "")
+}
+
+type dockerManifestList struct {
+	Manifests []struct {
+		Digest string `json:"digest"`
+	} `json:"manifests"`
 }
