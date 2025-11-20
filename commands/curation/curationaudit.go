@@ -1146,8 +1146,11 @@ func buildNpmDownloadUrl(url, repo, name, scope, version string) []string {
 }
 
 func getDockerNameScopeAndVersion(id, artiUrl, repo string) (downloadUrls []string, name, scope, version string) {
-	id = strings.TrimPrefix(id, "docker://")
+	if id == "" {
+		return
+	}
 
+	id = strings.TrimPrefix(id, "docker://")
 	var lastColonIndex int
 	if strings.Contains(id, ":sha256:") {
 		sha256Index := strings.Index(id, ":sha256:")
