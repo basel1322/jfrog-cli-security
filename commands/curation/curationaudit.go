@@ -816,9 +816,7 @@ func (nc *treeAnalyzer) fetchNodesStatus(graph *xrayUtils.GraphNode, p *sync.Map
 		defer consumerProducer.Done()
 		for _, node := range graph.Nodes {
 			if _, ok := rootNodeIds[node.Id]; ok {
-				if nc.tech != techutils.Docker {
-					continue
-				}
+				continue
 			}
 			getTask := func(node xrayUtils.GraphNode) func(threadId int) error {
 				return func(threadId int) (err error) {
