@@ -216,8 +216,6 @@ type treeAnalyzer struct {
 	tech                 techutils.Technology
 	parallelRequests     int
 	downloadUrls         map[string]string
-	serverDetails        *config.ServerDetails
-	dockerImageName      string
 }
 
 type CurationAuditCommand struct {
@@ -407,9 +405,11 @@ func (ca *CurationAuditCommand) GetAuth(tech techutils.Technology) (serverDetail
 			if err != nil {
 				return
 			}
-			if repoConfig := docker.SetDockerRepo(serverDetails, ca.DockerImageName(), ca.DepsRepo(), ca.PackageManagerConfig); repoConfig != nil {
-				ca.setPackageManagerConfig(repoConfig)
+			repoConfig, err := docker.GetDockerRepoConfig(serverDetails, ca.DockerImageName(), ca.DepsRepo())
+			if err != nil {
+				return nil, err
 			}
+			ca.setPackageManagerConfig(repoConfig)
 		} else {
 			if err = ca.SetRepo(tech); err != nil {
 				return
@@ -480,7 +480,7 @@ func (ca *CurationAuditCommand) auditTree(tech techutils.Technology, results map
 	}
 	rootNode := depTreeResult.FullDepTrees[0]
 	// Extract project name from the dependency tree
-	_, projectName, projectScope, projectVersion := getUrlNameAndVersionByTech(tech, rootNode, nil, "", "", serverDetails, ca.DockerImageName())
+	_, projectName, projectScope, projectVersion := getUrlNameAndVersionByTech(tech, rootNode, nil, "", "")
 	// If the project name is not set, we use the current working directory name
 	if projectName == "" {
 		workPath, err := os.Getwd()
@@ -775,7 +775,7 @@ func (nc *treeAnalyzer) GraphsRelations(fullDependenciesTrees []*xrayUtils.Graph
 func (nc *treeAnalyzer) fillGraphRelations(node *xrayUtils.GraphNode, preProcessMap *sync.Map,
 	packagesStatus *[]*PackageStatus, parent, parentVersion string, visited *datastructures.Set[string], isRoot bool) {
 	for _, child := range node.Nodes {
-		packageUrls, name, scope, version := getUrlNameAndVersionByTech(nc.tech, child, nc.downloadUrls, nc.url, nc.repo, nc.serverDetails, nc.dockerImageName)
+		packageUrls, name, scope, version := getUrlNameAndVersionByTech(nc.tech, child, nc.downloadUrls, nc.url, nc.repo)
 		if isRoot {
 			parent = name
 			parentVersion = version
@@ -838,7 +838,7 @@ func (nc *treeAnalyzer) fetchNodesStatus(graph *xrayUtils.GraphNode, p *sync.Map
 }
 
 func (nc *treeAnalyzer) fetchNodeStatus(node xrayUtils.GraphNode, p *sync.Map) error {
-	packageUrls, name, scope, version := getUrlNameAndVersionByTech(nc.tech, &node, nc.downloadUrls, nc.url, nc.repo, nc.serverDetails, nc.dockerImageName)
+	packageUrls, name, scope, version := getUrlNameAndVersionByTech(nc.tech, &node, nc.downloadUrls, nc.url, nc.repo)
 	if len(packageUrls) == 0 {
 		return nil
 	}
@@ -956,7 +956,7 @@ func makeLegiblePolicyDetails(explanation, recommendation string) (string, strin
 	return explanation, recommendation
 }
 
-func getUrlNameAndVersionByTech(tech techutils.Technology, node *xrayUtils.GraphNode, downloadUrlsMap map[string]string, artiUrl, repo string, serverDetails *config.ServerDetails, dockerImageName string) (downloadUrls []string, name string, scope string, version string) {
+func getUrlNameAndVersionByTech(tech techutils.Technology, node *xrayUtils.GraphNode, downloadUrlsMap map[string]string, artiUrl, repo string) (downloadUrls []string, name string, scope string, version string) {
 	switch tech {
 	case techutils.Npm:
 		return getNpmNameScopeAndVersion(node.Id, artiUrl, repo, techutils.Npm.String())
@@ -975,7 +975,7 @@ func getUrlNameAndVersionByTech(tech techutils.Technology, node *xrayUtils.Graph
 		downloadUrls, name, version = getNugetNameScopeAndVersion(node.Id, artiUrl, repo)
 		return
 	case techutils.Docker:
-		return getDockerNameScopeAndVersion(node.Id, artiUrl, repo, serverDetails, dockerImageName)
+		return getDockerNameScopeAndVersion(node.Id, artiUrl, repo)
 	}
 	return
 }
@@ -1147,20 +1147,7 @@ func buildNpmDownloadUrl(url, repo, name, scope, version string) []string {
 	return []string{packageUrl}
 }
 
-func getDockerNameScopeAndVersion(id, artiUrl, repo string, serverDetails *config.ServerDetails, imageName string) (downloadUrls []string, name, scope, version string) {
-	if artiUrl == "" && repo == "" {
-		id = strings.TrimPrefix(id, "docker://")
-		lastColonIndex := strings.LastIndex(id, ":")
-		if lastColonIndex > 0 {
-			name = id[:lastColonIndex]
-			version = id[lastColonIndex+1:]
-		} else {
-			name = id
-			version = "latest"
-		}
-		return
-	}
-
+func getDockerNameScopeAndVersion(id, artiUrl, repo string) (downloadUrls []string, name, scope, version string) {
 	id = strings.TrimPrefix(id, "docker://")
 	lastColonIndex := strings.LastIndex(id, ":")
 	if lastColonIndex > 0 {
@@ -1172,15 +1159,10 @@ func getDockerNameScopeAndVersion(id, artiUrl, repo string, serverDetails *confi
 	}
 
 	if artiUrl != "" && repo != "" {
-		// Transform URL and repo for Docker if needed
-		if serverDetails != nil {
-			artiUrl, repo = docker.GetDockerUrlAndRepo(artiUrl, serverDetails, nil, imageName)
-		}
-		if artiUrl != "" && repo != "" {
-			downloadUrls = []string{fmt.Sprintf("%s/api/docker/%s/v2/%s/manifests/%s",
-				strings.TrimSuffix(artiUrl, "/"), repo, name, version)}
-		}
+		downloadUrls = []string{fmt.Sprintf("%s/api/docker/%s/v2/%s/manifests/%s",
+			strings.TrimSuffix(artiUrl, "/"), repo, name, version)}
 	}
+
 	return
 }
 

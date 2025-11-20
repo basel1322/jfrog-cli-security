@@ -314,7 +314,7 @@ var flagsMap = map[string]components.Flag{
 	AddSastRules: components.NewStringFlag(AddSastRules, "Incorporate any additional SAST rules (in JSON format, with absolute path) into this local scan."),
 
 	// Docker flags
-	DockerImageName: components.NewStringFlag(DockerImageName, "[Docker] Defines the Docker image name to audit. For example: 'my-image:tag' or 'localhost:8046/repo/nginx:latest'."),
+	DockerImageName: components.NewStringFlag(DockerImageName, "[Docker] Defines the Docker image name to audit. Format: 'repo/path/image:tag'. For example: 'curation-docker/dweomer/nginx-auth-ldap:1.13.5' or 'repo/image:tag'. If no tag is provided, 'latest' is used."),
 
 	// Git flags
 	InputFile:       components.NewStringFlag(InputFile, "Path to an input file in YAML format contains multiple git providers. With this option, all other scm flags will be ignored and only git servers mentioned in the file will be examined.."),
