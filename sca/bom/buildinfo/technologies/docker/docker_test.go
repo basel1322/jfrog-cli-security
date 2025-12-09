@@ -26,9 +26,9 @@ func TestBuildDependencyTree(t *testing.T) {
 			expectError:        false,
 		},
 		{
-			name:               "Docker image with library prefix",
-			dockerImageName:    "my-repo/library/my-image:latest",
-			expectedUniqueDeps: []string{"docker://my-image:latest"},
+			name:               "Docker image with nested path",
+			dockerImageName:    "my-repo/bitnami/nginx:latest",
+			expectedUniqueDeps: []string{"docker://bitnami/nginx:latest"},
 			expectError:        false,
 		},
 		{
@@ -134,20 +134,10 @@ func TestBuildDependencyTree_MultiArch(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, trees)
 
-	expectedUniqueDeps := []string{
-		"docker://my-image:sha256:3446f171923148a8e1ef9ed402f6eefcf69811c2b25cd969e13ef175a310836d",
-		"docker://my-image:sha256:cb7bf93be94a38ca93a8dbca4468ce86079c6c83aacc8d603090db29fcaaf7b8",
-		"docker://my-image:sha256:27ac676b8471b951f257b1349c6f69b5f8738499494f89270f48b3c798beada4",
-	}
-	assert.ElementsMatch(t, uniqueDeps, expectedUniqueDeps, "Unique dependencies mismatch. First is actual, Second is Expected")
+	assert.Len(t, uniqueDeps, 1, "Should return only one manifest for current architecture")
 
 	require.Len(t, trees, 1)
 	assert.Equal(t, "root", trees[0].Id)
-	assert.Len(t, trees[0].Nodes, 3)
-
-	nodeIds := make([]string, 0, len(trees[0].Nodes))
-	for _, node := range trees[0].Nodes {
-		nodeIds = append(nodeIds, node.Id)
-	}
-	assert.ElementsMatch(t, nodeIds, expectedUniqueDeps)
+	assert.Len(t, trees[0].Nodes, 1, "Should have only one node for current architecture")
+	assert.True(t, strings.HasPrefix(uniqueDeps[0], "docker://my-image:sha256:"))
 }

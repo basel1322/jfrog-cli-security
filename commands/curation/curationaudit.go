@@ -364,9 +364,11 @@ func getPolicyAndConditionId(policy, condition string) string {
 }
 
 func (ca *CurationAuditCommand) doCurateAudit(results map[string]*CurationReport) error {
-	techs := techutils.DetectedTechnologiesList()
+	var techs []string
 	if ca.DockerImageName() != "" {
 		techs = []string{techutils.Docker.String()}
+	} else {
+		techs = techutils.DetectedTechnologiesList()
 	}
 	for _, tech := range techs {
 		supportedFunc, ok := supportedTech[techutils.Technology(tech)]

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/CycloneDX/cyclonedx-go"
@@ -287,6 +288,15 @@ func SetResolutionRepoInParamsIfExists(params *technologies.BuildInfoBomGenerato
 	if params.DependenciesRepository != "" || params.IgnoreConfigFile {
 		// If the depsRepo is already set or the configuration file is ignored, there is no need to search for the configuration file.
 		return
+	}
+	if tech == techutils.Docker {
+		if params.DockerImageName != "" {
+			parts := strings.Split(params.DockerImageName, "/")
+			if len(parts) >= 2 {
+				log.Info(fmt.Sprintf("Using repository: %s", parts[0]))
+			}
+		}
+		return params.ServerDetails, nil
 	}
 	artifactoryDetails, err := artifactory.GetResolutionRepoIfExists(tech)
 	if err != nil {
