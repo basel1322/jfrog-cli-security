@@ -1163,31 +1163,17 @@ func getDockerNameScopeAndVersion(id, artiUrl, repo string) (downloadUrls []stri
 	}
 
 	id = strings.TrimPrefix(id, "docker://")
-	var lastColonIndex int
-	if strings.Contains(id, ":sha256:") {
-		sha256Index := strings.Index(id, ":sha256:")
-		if sha256Index > 0 {
-			lastColonIndex = sha256Index
-		} else {
-			lastColonIndex = strings.LastIndex(id, ":")
-		}
+	if idx := strings.Index(id, ":sha256:"); idx > 0 {
+		name, version = id[:idx], id[idx+1:]
+	} else if idx := strings.LastIndex(id, ":"); idx > 0 {
+		name, version = id[:idx], id[idx+1:]
 	} else {
-		lastColonIndex = strings.LastIndex(id, ":")
+		name, version = id, "latest"
 	}
-
-	if lastColonIndex > 0 {
-		name = id[:lastColonIndex]
-		version = id[lastColonIndex+1:]
-	} else {
-		name = id
-		version = "latest"
-	}
-
 	if artiUrl != "" && repo != "" {
 		downloadUrls = []string{fmt.Sprintf("%s/api/docker/%s/v2/%s/manifests/%s",
 			strings.TrimSuffix(artiUrl, "/"), repo, name, version)}
 	}
-
 	return
 }
 
