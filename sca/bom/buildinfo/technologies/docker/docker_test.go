@@ -1,153 +1,159 @@
 package docker
 
 import (
-	"net/http"
-	"strings"
 	"testing"
 
-	coreCommonTests "github.com/jfrog/jfrog-cli-core/v2/common/tests"
+	"github.com/jfrog/jfrog-cli-security/sca/bom/buildinfo/technologies"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jfrog/jfrog-cli-security/sca/bom/buildinfo/technologies"
 )
 
-func TestBuildDependencyTree(t *testing.T) {
+func TestParseDockerImage(t *testing.T) {
 	tests := []struct {
-		name               string
-		dockerImageName    string
-		expectedUniqueDeps []string
-		expectError        bool
+		name         string
+		imageName    string
+		expectedRepo string
+		expectedImg  string
+		expectedTag  string
+		expectError  bool
 	}{
+		// SaaS: Repository path
 		{
-			name:               "Valid docker image with repo and tag",
-			dockerImageName:    "my-repo/my-image:v1.0.0",
-			expectedUniqueDeps: []string{"docker://my-image:v1.0.0"},
-			expectError:        false,
+			name:         "SaaS repository path",
+			imageName:    "acme.jfrog.io/docker-local/nginx:1.21",
+			expectedRepo: "docker-local",
+			expectedImg:  "nginx",
+			expectedTag:  "1.21",
 		},
 		{
-			name:               "Docker image with library prefix",
-			dockerImageName:    "my-repo/library/my-image:latest",
-			expectedUniqueDeps: []string{"docker://my-image:latest"},
-			expectError:        false,
+			name:         "SaaS repository path with nested image",
+			imageName:    "acme.jfrog.io/docker-local/bitnami/kubectl:latest",
+			expectedRepo: "docker-local",
+			expectedImg:  "bitnami/kubectl",
+			expectedTag:  "latest",
+		},
+		// SaaS: Subdomain
+		{
+			name:         "SaaS subdomain format",
+			imageName:    "acme-docker-local.jfrog.io/nginx:1.21",
+			expectedRepo: "docker-local",
+			expectedImg:  "nginx",
+			expectedTag:  "1.21",
 		},
 		{
-			name:               "Docker image without tag (defaults to latest)",
-			dockerImageName:    "my-repo/my-image",
-			expectedUniqueDeps: []string{"docker://my-image:latest"},
-			expectError:        false,
+			name:         "SaaS subdomain with nested image",
+			imageName:    "acme-docker-remote.jfrog.io/bitnami/redis:7.0",
+			expectedRepo: "docker-remote",
+			expectedImg:  "bitnami/redis",
+			expectedTag:  "7.0",
+		},
+		// Subdomain CNAME
+		{
+			name:         "Subdomain CNAME format",
+			imageName:    "docker-local.acme.com/nginx:alpine",
+			expectedRepo: "docker-local",
+			expectedImg:  "nginx",
+			expectedTag:  "alpine",
+		},
+		// Self-Managed: Repository path
+		{
+			name:         "Self-managed repository path",
+			imageName:    "myartifactory.com/docker-local/redis:7.0",
+			expectedRepo: "docker-local",
+			expectedImg:  "redis",
+			expectedTag:  "7.0",
+		},
+		// Self-Managed: Subdomain
+		{
+			name:         "Self-managed subdomain",
+			imageName:    "docker-virtual.myartifactory.com/alpine:3.18",
+			expectedRepo: "docker-virtual",
+			expectedImg:  "alpine",
+			expectedTag:  "3.18",
+		},
+		// Port method (port IS the repo, no repo in path)
+		{
+			name:         "Port method",
+			imageName:    "myartifactory.com:8876/nginx:1.21",
+			expectedRepo: "8876",
+			expectedImg:  "nginx",
+			expectedTag:  "1.21",
+		},
+		// Registry with port (repo in path)
+		{
+			name:         "Localhost with port and repo",
+			imageName:    "localhost:8046/docker-local/nginx:1.21",
+			expectedRepo: "docker-local",
+			expectedImg:  "nginx",
+			expectedTag:  "1.21",
 		},
 		{
-			name:               "Empty docker image name",
-			dockerImageName:    "",
-			expectedUniqueDeps: nil,
-			expectError:        true,
+			name:         "IP address with port and repo",
+			imageName:    "192.168.50.230:8046/docker-local/nginx:1.21",
+			expectedRepo: "docker-local",
+			expectedImg:  "nginx",
+			expectedTag:  "1.21",
 		},
 		{
-			name:               "Invalid format - no repo",
-			dockerImageName:    "image:tag",
-			expectedUniqueDeps: nil,
-			expectError:        true,
+			name:         "IP address with port and nested image",
+			imageName:    "192.168.50.230:8046/docker-local/bitnami/kubectl:latest",
+			expectedRepo: "docker-local",
+			expectedImg:  "bitnami/kubectl",
+			expectedTag:  "latest",
+		},
+		// Default tag
+		{
+			name:         "No tag defaults to latest",
+			imageName:    "acme.jfrog.io/docker-local/nginx",
+			expectedRepo: "docker-local",
+			expectedImg:  "nginx",
+			expectedTag:  "latest",
+		},
+		// Error cases
+		{
+			name:        "Empty image name",
+			imageName:   "",
+			expectError: true,
+		},
+		{
+			name:        "No registry",
+			imageName:   "nginx:latest",
+			expectError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			params := technologies.BuildInfoBomGeneratorParams{
-				DockerImageName: tt.dockerImageName,
-			}
-			_, uniqueDeps, err := BuildDependencyTree(params)
-
+			info, err := ParseDockerImage(tt.imageName)
 			if tt.expectError {
 				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.ElementsMatch(t, uniqueDeps, tt.expectedUniqueDeps, "Unique dependencies mismatch. First is actual, Second is Expected")
+				return
 			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedRepo, info.Repo)
+			assert.Equal(t, tt.expectedImg, info.Image)
+			assert.Equal(t, tt.expectedTag, info.Tag)
 		})
 	}
 }
-func TestBuildDependencyTree_MultiArch(t *testing.T) {
-	manifestListResponse := `{
-		"schemaVersion": 2,
-		"mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
-		"manifests": [
-			{
-				"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-				"size": 2413,
-				"digest": "sha256:3446f171923148a8e1ef9ed402f6eefcf69811c2b25cd969e13ef175a310836d",
-				"platform": {
-					"architecture": "amd64",
-					"os": "linux"
-				}
-			},
-			{
-				"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-				"size": 2413,
-				"digest": "sha256:cb7bf93be94a38ca93a8dbca4468ce86079c6c83aacc8d603090db29fcaaf7b8",
-				"platform": {
-					"architecture": "arm64",
-					"os": "linux"
-				}
-			},
-			{
-				"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-				"size": 2412,
-				"digest": "sha256:27ac676b8471b951f257b1349c6f69b5f8738499494f89270f48b3c798beada4",
-				"platform": {
-					"architecture": "arm",
-					"os": "linux",
-					"variant": "v7"
-				}
-			}
-		]
-	}`
 
-	serverMock, serverDetails, _ := coreCommonTests.CreateRtRestsMockServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodHead {
-			if strings.Contains(r.RequestURI, "/api/docker/") && strings.Contains(r.RequestURI, "/manifests/") {
-				w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.list.v2+json")
-				w.WriteHeader(http.StatusOK)
-			}
-		}
-		if r.Method == http.MethodGet {
-			if strings.Contains(r.RequestURI, "/api/docker/") && strings.Contains(r.RequestURI, "/manifests/") {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, err := w.Write([]byte(manifestListResponse))
-				if err != nil {
-					t.Errorf("failed to write response: %v", err)
-				}
-			}
-		}
-	})
-	defer serverMock.Close()
-
-	serverDetails.ArtifactoryUrl = serverDetails.Url + "artifactory"
-
-	params := technologies.BuildInfoBomGeneratorParams{
-		DockerImageName: "my-repo/my-image:v1.0.0",
-		ServerDetails:   serverDetails,
+func TestBuildDependencyTree(t *testing.T) {
+	tests := []struct {
+		name            string
+		dockerImageName string
+		expectError     bool
+	}{
+		{name: "Empty image name", dockerImageName: "", expectError: true},
+		{name: "No registry", dockerImageName: "image:tag", expectError: true},
 	}
 
-	trees, uniqueDeps, err := BuildDependencyTree(params)
-	assert.NoError(t, err)
-	assert.NotNil(t, trees)
-
-	expectedUniqueDeps := []string{
-		"docker://my-image:sha256:3446f171923148a8e1ef9ed402f6eefcf69811c2b25cd969e13ef175a310836d",
-		"docker://my-image:sha256:cb7bf93be94a38ca93a8dbca4468ce86079c6c83aacc8d603090db29fcaaf7b8",
-		"docker://my-image:sha256:27ac676b8471b951f257b1349c6f69b5f8738499494f89270f48b3c798beada4",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := technologies.BuildInfoBomGeneratorParams{DockerImageName: tt.dockerImageName}
+			_, _, err := BuildDependencyTree(params)
+			if tt.expectError {
+				assert.Error(t, err)
+			}
+		})
 	}
-	assert.ElementsMatch(t, uniqueDeps, expectedUniqueDeps, "Unique dependencies mismatch. First is actual, Second is Expected")
-
-	require.Len(t, trees, 1)
-	assert.Equal(t, "root", trees[0].Id)
-	assert.Len(t, trees[0].Nodes, 3)
-
-	nodeIds := make([]string, 0, len(trees[0].Nodes))
-	for _, node := range trees[0].Nodes {
-		nodeIds = append(nodeIds, node.Id)
-	}
-	assert.ElementsMatch(t, nodeIds, expectedUniqueDeps)
 }

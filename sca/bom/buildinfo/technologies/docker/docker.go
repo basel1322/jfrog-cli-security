@@ -4,164 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
-
-	xrayUtils "github.com/jfrog/jfrog-client-go/xray/services/utils"
-
-	"github.com/jfrog/jfrog-client-go/utils/log"
 
 	"github.com/jfrog/jfrog-cli-core/v2/common/project"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
 	"github.com/jfrog/jfrog-cli-security/sca/bom/buildinfo/technologies"
+	"github.com/jfrog/jfrog-client-go/utils/log"
+	xrayUtils "github.com/jfrog/jfrog-client-go/xray/services/utils"
 )
 
-const (
-	dockerPackagePrefix = "docker://"
-)
+const dockerPackagePrefix = "docker://"
 
-func BuildDependencyTree(params technologies.BuildInfoBomGeneratorParams) (dependencyTrees []*xrayUtils.GraphNode, uniqueDeps []string, err error) {
-	if params.DockerImageName == "" {
-		return nil, nil, fmt.Errorf("docker image name is required")
-	}
-
-	fullImageName := normalizeImageName(params.DockerImageName)
-
-	_, pkgName, pkgVersion := extractRepoImageAndTag(fullImageName)
-	if pkgName == "" {
-		return nil, nil, fmt.Errorf("invalid docker image format: '%s'. Image name is missing", fullImageName)
-	}
-
-	pkgName = strings.TrimPrefix(pkgName, "library/")
-
-	archDigest, dockerErr := getArchDigestUsingDocker(fullImageName)
-	if dockerErr != nil {
-		return nil, nil, dockerErr
-	}
-
-	var imageRef string
-	if archDigest != "" {
-		imageRef = dockerPackagePrefix + pkgName + ":" + archDigest
-		log.Debug("Using arch-specific Docker digest: %s", imageRef)
-	} else {
-		imageRef = dockerPackagePrefix + pkgName + ":" + pkgVersion
-		log.Debug("Using tag for Docker image: %s", imageRef)
-	}
-
-	uniqueDeps = []string{imageRef}
-	childNodes := []*xrayUtils.GraphNode{{Id: imageRef}}
-
-	return []*xrayUtils.GraphNode{{Id: "root", Nodes: childNodes}}, uniqueDeps, nil
-}
-
-func normalizeImageName(imageName string) string {
-	imageName = strings.TrimSpace(imageName)
-	if idx := strings.Index(imageName, ","); idx > 0 {
-		imageName = strings.TrimSpace(imageName[:idx])
-	}
-	return strings.TrimSuffix(imageName, "/")
-}
-
-func getArchDigestUsingDocker(fullImageName string) (string, error) {
-	log.Debug("Running docker buildx imagetools inspect for: %s", fullImageName)
-
-	cmd := exec.Command("docker", "buildx", "imagetools", "inspect", "--raw", fullImageName)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		outputStr := string(output)
-
-		if strings.Contains(outputStr, "403") || strings.Contains(outputStr, "Forbidden") {
-			log.Debug(fmt.Sprintf("Received 403 Forbidden: %s", outputStr))
-			log.Debug("403 response received (single-arch image or blocked), using tag for validating checks")
-			return "", nil
-		}
-
-		// For other errors, return the original Docker error output
-		return "", fmt.Errorf("%s", strings.TrimSpace(outputStr))
-	}
-
-	var manifestList dockerManifestList
-	if err := json.Unmarshal(output, &manifestList); err != nil {
-		log.Debug("Not a multi-arch manifest list, will use tag directly")
-		return "", nil
-	}
-
-	if len(manifestList.Manifests) == 0 {
-		log.Debug("Single-arch image, will use tag directly")
-		return "", nil
-	}
-
-	currentArch := runtime.GOARCH
-	for _, manifest := range manifestList.Manifests {
-		if manifest.Digest != "" && manifest.Platform.Architecture == currentArch {
-			log.Debug("Found matching Docker architecture %s, digest: %s", currentArch, manifest.Digest)
-			return manifest.Digest, nil
-		}
-	}
-
-	log.Debug("No matching architecture found for %s in multi-arch image, will use tag directly", currentArch)
-	return "", nil
-}
-
-func extractRepoImageAndTag(imagePath string) (repo, image, tag string) {
-	tag = "latest"
-
-	if lastColon := strings.LastIndex(imagePath, ":"); lastColon > 0 {
-		afterColon := imagePath[lastColon+1:]
-		if !strings.Contains(afterColon, "/") {
-			tag = afterColon
-			imagePath = imagePath[:lastColon]
-		}
-	}
-
-	parts := strings.Split(imagePath, "/")
-	if len(parts) < 2 {
-		return "", imagePath, tag
-	}
-
-	firstPart := parts[0]
-	if strings.Contains(firstPart, ".") || strings.Contains(firstPart, ":") {
-		if len(parts) == 2 {
-			return "", parts[1], tag
-		}
-		if len(parts) == 3 {
-			return parts[1], parts[2], tag
-		}
-		return parts[1], strings.Join(parts[2:], "/"), tag
-	}
-
-	return parts[0], strings.Join(parts[1:], "/"), tag
-}
-
-func GetDockerRepositoryConfig(serverDetails *config.ServerDetails, imageName, depsRepo, packageManagerRepo string) (*project.RepositoryConfig, error) {
-	repo := packageManagerRepo
-	if repo == "" && imageName != "" {
-		repo, _, _ = extractRepoImageAndTag(imageName)
-	}
-	if repo == "" {
-		repo = depsRepo
-	}
-	if repo == "" {
-		if imageName != "" {
-			return nil, fmt.Errorf("invalid docker image format: '%s'. Expected format: 'repo/path/image:tag' or 'repo/image:tag'. Repository name is required", imageName)
-		}
-		return nil, fmt.Errorf("docker repository name is required")
-	}
-
-	repoConfig := &project.RepositoryConfig{}
-	repoConfig.SetServerDetails(serverDetails).SetTargetRepo(repo)
-
-	return repoConfig, nil
-}
-
-func GetDockerRepoConfig(serverDetails *config.ServerDetails, imageName, depsRepo string) (*project.RepositoryConfig, error) {
-	if imageName == "" {
-		return nil, fmt.Errorf("docker image name is required. Use --image flag with format 'RT-URL/repo/path/image:tag'")
-	}
-	if serverDetails == nil {
-		return nil, fmt.Errorf("server details are required")
-	}
-	return GetDockerRepositoryConfig(serverDetails, imageName, depsRepo, "")
+type DockerImageInfo struct {
+	Registry string
+	Repo     string
+	Image    string
+	Tag      string
 }
 
 type dockerManifestList struct {
@@ -172,4 +32,154 @@ type dockerManifestList struct {
 			OS           string `json:"os"`
 		} `json:"platform"`
 	} `json:"manifests"`
+}
+
+var (
+	jfrogSubdomainPattern = regexp.MustCompile(`^([a-zA-Z0-9]+)-([a-zA-Z0-9-]+)\.jfrog\.io$`)
+	ipAddressPattern      = regexp.MustCompile(`^\d+\.`)
+)
+
+func ParseDockerImage(imageName string) (*DockerImageInfo, error) {
+	imageName = strings.TrimSpace(imageName)
+	if imageName == "" {
+		return nil, fmt.Errorf("docker image name is required")
+	}
+	if idx := strings.Index(imageName, ","); idx > 0 {
+		imageName = strings.TrimSpace(imageName[:idx])
+	}
+	imageName = strings.TrimSuffix(imageName, "/")
+
+	info := &DockerImageInfo{Tag: "latest"}
+
+	if idx := strings.LastIndex(imageName, ":"); idx > 0 {
+		afterColon := imageName[idx+1:]
+		if !strings.Contains(afterColon, "/") {
+			info.Tag = afterColon
+			imageName = imageName[:idx]
+		}
+	}
+
+	parts := strings.Split(imageName, "/")
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("invalid docker image format: '%s'", imageName)
+	}
+
+	info.Registry = parts[0]
+	info.Repo, info.Image = parseRegistryAndExtract(info.Registry, parts[1:])
+
+	if info.Image == "" {
+		return nil, fmt.Errorf("invalid docker image format: '%s'", imageName)
+	}
+	if info.Repo == "" {
+		return nil, fmt.Errorf("could not determine repository from: '%s'", imageName)
+	}
+
+	log.Debug(fmt.Sprintf("Parsed Docker image - Registry: %s, Repo: %s, Image: %s, Tag: %s",
+		info.Registry, info.Repo, info.Image, info.Tag))
+
+	return info, nil
+}
+
+func parseRegistryAndExtract(registry string, remainingParts []string) (repo, image string) {
+	image = strings.Join(remainingParts, "/")
+
+	// SaaS subdomain: <INSTANCE>-<REPO>.jfrog.io/image:tag (repo in subdomain, check first)
+	if matches := jfrogSubdomainPattern.FindStringSubmatch(registry); matches != nil {
+		repo = matches[2]
+		return
+	}
+
+	// Subdomain pattern: <REPO>.<DOMAIN>/image:tag (repo in subdomain, not IP, check first)
+	registryParts := strings.Split(registry, ".")
+	if len(registryParts) >= 3 && !strings.HasSuffix(registry, ".jfrog.io") && !ipAddressPattern.MatchString(registry) {
+		repo = registryParts[0]
+		return
+	}
+
+	// Repository path: <REGISTRY>/<REPO>/image:tag (2+ parts means repo in path)
+	if len(remainingParts) >= 2 {
+		repo = remainingParts[0]
+		image = strings.Join(remainingParts[1:], "/")
+		return
+	}
+
+	// Port method: <INSTANCE>:<PORT>/image:tag (port IS the repo, single part only)
+	if strings.Contains(registry, ":") {
+		_, repo, _ = strings.Cut(registry, ":")
+		return
+	}
+
+	return "", ""
+}
+
+func BuildDependencyTree(params technologies.BuildInfoBomGeneratorParams) ([]*xrayUtils.GraphNode, []string, error) {
+	if params.DockerImageName == "" {
+		return nil, nil, fmt.Errorf("docker image name is required")
+	}
+
+	imageInfo, err := ParseDockerImage(params.DockerImageName)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	archDigest, err := getArchDigestUsingDocker(params.DockerImageName)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	imageRef := dockerPackagePrefix + imageInfo.Image + ":"
+	if archDigest != "" {
+		imageRef += archDigest
+	} else {
+		imageRef += imageInfo.Tag
+	}
+
+	log.Debug(fmt.Sprintf("Docker image reference: %s", imageRef))
+
+	return []*xrayUtils.GraphNode{{Id: "root", Nodes: []*xrayUtils.GraphNode{{Id: imageRef}}}},
+		[]string{imageRef}, nil
+}
+
+func getArchDigestUsingDocker(fullImageName string) (string, error) {
+	cmd := exec.Command("docker", "buildx", "imagetools", "inspect", "--raw", fullImageName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		outputStr := string(output)
+		if strings.Contains(outputStr, "403") || strings.Contains(outputStr, "Forbidden") {
+			return "", nil
+		}
+		return "", fmt.Errorf("%s", strings.TrimSpace(outputStr))
+	}
+
+	var manifestList dockerManifestList
+	if err := json.Unmarshal(output, &manifestList); err != nil {
+		return "", nil
+	}
+
+	if len(manifestList.Manifests) == 0 {
+		return "", nil
+	}
+
+	currentArch := runtime.GOARCH
+	for _, manifest := range manifestList.Manifests {
+		if manifest.Platform.Architecture == currentArch && manifest.Digest != "" {
+			return manifest.Digest, nil
+		}
+	}
+
+	return "", nil
+}
+
+func GetDockerRepositoryConfig(serverDetails *config.ServerDetails, imageName string) (*project.RepositoryConfig, error) {
+	imageInfo, err := ParseDockerImage(imageName)
+	if err != nil {
+		return nil, err
+	}
+	return GetDockerRepositoryConfigFromInfo(serverDetails, imageInfo)
+}
+
+func GetDockerRepositoryConfigFromInfo(serverDetails *config.ServerDetails, imageInfo *DockerImageInfo) (*project.RepositoryConfig, error) {
+	repoConfig := &project.RepositoryConfig{}
+	repoConfig.SetServerDetails(serverDetails).SetTargetRepo(imageInfo.Repo)
+	return repoConfig, nil
 }

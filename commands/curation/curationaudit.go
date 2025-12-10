@@ -413,7 +413,7 @@ func (ca *CurationAuditCommand) GetAuth(tech techutils.Technology) (serverDetail
 			if err != nil {
 				return
 			}
-			repoConfig, err := docker.GetDockerRepoConfig(serverDetails, ca.DockerImageName(), ca.DepsRepo())
+			repoConfig, err := docker.GetDockerRepositoryConfig(serverDetails, ca.DockerImageName())
 			if err != nil {
 				return nil, err
 			}
